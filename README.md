@@ -280,6 +280,7 @@ The API also maintains a central **registry** database at `~/.tile2net/registry.
 | Table | Columns | Purpose |
 |-------|---------|---------|
 | `projects` | `name`, `location`, `zoom`, `crs`, `metric_crs`, `source`, `tile_step`, `stitch_step`, `viario_type`, `viario_url`, `output_dir`, `bbox_s`, `bbox_w`, `bbox_n`, `bbox_e`, `status`, `created_at`, `updated_at` | Project metadata registry |
+| `sources` | `name`, `tile_url`, `bbox_s`, `bbox_w`, `bbox_n`, `bbox_e`, `zoom_max`, `server`, `extension`, `tilesize`, `keyword` | Custom tile source catalogue |
 
 ### `width_source` provenance
 
@@ -310,6 +311,41 @@ gdf_poly = read_polygons(con, "valencia_centre")   # GeoDataFrame (WGS84)
 gdf_net  = read_network(con, "valencia_centre")    # GeoDataFrame (WGS84)
 graph    = read_graph(con, "valencia_centre")       # nx.MultiGraph
 ```
+
+---
+
+## Tile Sources
+
+Tile2Net downloads aerial imagery from **tile sources** — each maps a name to a
+URL template, coverage bounding box, and zoom range.
+
+The built-in catalogue in `source.py` covers several **US states and counties**.
+For any region outside the US, register the **ESRI World Imagery** source, which
+provides full global coverage at zooms 0–19.
+
+### ESRI World Imagery — default source for non-US regions
+
+```bash
+# Register once via the API (persists across restarts)
+curl -X POST http://localhost:8000/sources/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "esri_world",
+    "tile_url": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    "bbox_s": 38.0, "bbox_w": -1.5, "bbox_n": 40.5, "bbox_e": 1.0,
+    "zoom_max": 19, "extension": "jpg", "keyword": "ESRI World Imagery"
+  }'
+
+# Then use it when creating a project
+curl -X POST http://localhost:8000/projects/ \
+  -H "Content-Type: application/json" \
+  -d '{"name":"valencia","location":"39.47,-0.38,39.48,-0.37","source":"esri_world"}'
+```
+
+For pre-downloaded tiles, pass `tile_input_dir` to the pipeline trigger
+or `--input` to the CLI generate command.  See
+[BASICS.md](https://github.com/VIDA-NYU/tile2net/blob/main/BASICS.md#global-coverage-via-esri-world-imagery)
+for full details on custom sources, tile URL formats, and the pre-download path.
 
 ---
 
@@ -348,19 +384,28 @@ the interactive OpenAPI documentation.
 | `GET` | `/projects/{name}/network` | GeoJSON network (filter: `f_type`, `bbox`, `min_width`) |
 | `GET` | `/projects/{name}/graph` | Graph summary (nodes, edges, total length) |
 | `GET` | `/projects/{name}/graph/edges` | GeoJSON graph edges |
+| `POST` | `/sources/` | Register a custom tile source |
+| `GET` | `/sources/` | List all tile sources |
+| `GET` | `/sources/{name}` | Get source details |
+| `DELETE` | `/sources/{name}` | Delete a tile source |
 
 ### Quick start
 
 ```bash
+# 0. Register a tile source for non-US regions (once, persists across restarts)
+curl -X POST http://localhost:8000/sources/ \
+  -H "Content-Type: application/json" \
+  -d '{"name":"esri_world","tile_url":"https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}","bbox_s":38,"bbox_w":-1.5,"bbox_n":40.5,"bbox_e":1,"zoom_max":19,"extension":"jpg","keyword":"ESRI World Imagery"}'
+
 # 1. Register a city (bbox or nominatim address)
 curl -X POST http://localhost:8000/projects/ \
   -H "Content-Type: application/json" \
-  -d '{"name":"valencia_centre","location":"39.469,-0.381,39.478,-0.369"}'
+  -d '{"name":"valencia_centre","location":"39.469,-0.381,39.478,-0.369","source":"esri_world"}'
 
 # 2. Run the pipeline (async — generate → infer → postprocess → persist)
 curl -X POST http://localhost:8000/projects/valencia_centre/pipeline \
   -H "Content-Type: application/json" \
-  -d '{"skip_generate":true}'
+  -d '{}'
 
 # 3. Poll until status == "completed"
 curl http://localhost:8000/projects/valencia_centre/pipeline/status | jq .status
@@ -377,7 +422,7 @@ The `POST /projects/{name}/pipeline` endpoint runs these stages in order:
 
 | Stage | Progress | What happens |
 |-------|----------|-------------|
-| `generating` | 0% → 33% | Downloads slippy-map tiles from the configured source, stitches them |
+| `generating` | 0% → 33% | Downloads slippy-map tiles from the registered source (US catalogue or custom), stitches them |
 | `inferring` | 33% → 66% | Runs HRNet+OCRNet semantic segmentation on the stitched tiles |
 | `postprocessing` | 66% → 100% | Cleans polygons, gap-fills via OSM, estimates widths, builds graph, persists to DuckDB |
 

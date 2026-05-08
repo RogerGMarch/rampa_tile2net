@@ -30,6 +30,58 @@ data, but at this moment, we only support inference.
 | USA     | VA             | TRUE                  |             |                  |
 | USA     | WA             | FALSE                 | KING        |                  |
 
+### Global Coverage via ESRI World Imagery
+
+The built-in catalogue above only covers **US states/counties**. For any other
+region — Spain, Europe, or anywhere worldwide — use the **ESRI World Imagery**
+source, which provides global coverage at zoom levels 0–19.
+
+Register it once with the API:
+
+```bash
+curl -X POST http://localhost:8000/sources/ \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "esri_world",
+    "tile_url": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+    "bbox_s": 38.0, "bbox_w": -1.5, "bbox_n": 40.5, "bbox_e": 1.0,
+    "zoom_max": 19, "extension": "jpg", "keyword": "ESRI World Imagery"
+  }'
+```
+
+Then any project can use it via `"source": "esri_world"` at creation time:
+
+```bash
+# API
+curl -X POST http://localhost:8000/projects/ \
+  -H "Content-Type: application/json" \
+  -d '{"name":"my_city","location":"39.47,-0.38,39.48,-0.37","source":"esri_world"}'
+
+# CLI (after API registration)
+python -m tile2net generate -l "39.47,-0.38,39.48,-0.37" -n my_city -o ./output -s esri_world
+```
+
+> **Tile URL format**: ESRI tiles use the `{z}/{y}/{x}` convention (ArcGIS
+> standard), not the usual `{z}/{x}/{y}`. The API handles this automatically.
+
+### Pre-downloaded tiles (`--input`)
+
+If tiles are already on disk, skip download by passing the tile directory:
+
+```bash
+python -m tile2net generate -l "39.47,-0.38,39.48,-0.37" -n my_city -o ./output --input "path/to/tiles/x_y.png"
+```
+
+Files should be named `{x}_{y}.png` (slippy tile coordinates).
+
+### Registering custom tile sources
+
+The API supports registering arbitrary tile sources at `POST /sources/`.  Each
+source defines a `tile_url` template with `{z}`, `{x}`, `{y}` placeholders and
+a coverage bounding box.  Sources can be listed, inspected, and deleted via
+the `GET /sources/`, `GET /sources/{name}`, and `DELETE /sources/{name}`
+endpoints.
+
 
 ## Basic Concepts:
 
