@@ -103,7 +103,7 @@ class ProjectCreate(BaseModel):
     )
     source: str | None = Field(
         None,
-        description="Optional tile source key (see the tile2net source catalogue).",
+        description="Tile source name registered via ``POST /sources/``, or a name from the built-in tile2net catalogue.",
     )
     tile_step: int = Field(
         1,
@@ -224,6 +224,10 @@ class PipelineTrigger(BaseModel):
         le=100,
         description="Passed through to the inference ``--dump_percent`` flag.",
     )
+    tile_input_dir: str | None = Field(
+        None,
+        description="Path to a directory with pre-downloaded tiles (passed as ``--input`` to generate).",
+    )
 
 
 class PipelineStatus(BaseModel):
@@ -280,3 +284,59 @@ class GraphSummary(BaseModel):
         ..., description="Metric CRS in which lengths are expressed."
     )
     components: int = Field(..., description="Number of connected components.")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Tile sources (custom catalogue)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class SourceCreate(BaseModel):
+    """Register a custom tile source for use by ``tile2net generate -s <name>``."""
+
+    name: str = Field(
+        ...,
+        min_length=1,
+        max_length=64,
+        pattern=r"^[a-z0-9_]+$",
+        description="Unique source slug (lowercase alphanumeric + underscore).",
+        examples=["valencia_icv_2025"],
+    )
+    tile_url: str = Field(
+        ...,
+        description="Tile URL template with ``{z}``, ``{x}``, ``{y}`` placeholders.",
+        examples=["https://server.example.com/tiles/{z}/{x}/{y}.png"],
+    )
+    bbox_s: float = Field(..., description="Coverage bounding-box south (WGS84).")
+    bbox_w: float = Field(..., description="Coverage bounding-box west (WGS84).")
+    bbox_n: float = Field(..., description="Coverage bounding-box north (WGS84).")
+    bbox_e: float = Field(..., description="Coverage bounding-box east (WGS84).")
+    zoom_max: int = Field(20, ge=0, le=22, description="Maximum zoom level available.")
+    server: str | None = Field(
+        None, description="Optional metadata/capabilities URL for the tile service."
+    )
+    extension: str = Field("png", description="Image file extension.")
+    tilesize: int = Field(256, description="Tile pixel size (usually 256).")
+    keyword: str | None = Field(None, description="Human-readable label for the source.")
+
+
+class SourceInfo(BaseModel):
+    """Read-only view of a registered tile source."""
+
+    name: str
+    tile_url: str
+    bbox_s: float
+    bbox_w: float
+    bbox_n: float
+    bbox_e: float
+    zoom_max: int
+    server: str | None = None
+    extension: str = "png"
+    tilesize: int = 256
+    keyword: str | None = None
+
+
+class SourceList(BaseModel):
+    """Wrapper for the list-sources response."""
+
+    sources: list[SourceInfo]

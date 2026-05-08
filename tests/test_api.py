@@ -259,3 +259,80 @@ class TestDataEndpoints:
     def test_missing_project(self, populated_client):
         resp = populated_client.get("/projects/nonexistent/polygons")
         assert resp.status_code == 404
+
+
+class TestSources:
+    """Test custom tile source CRUD."""
+
+    SOURCE = {
+        "name": "valencia_icv_test",
+        "tile_url": "https://example.com/tiles/{z}/{x}/{y}.png",
+        "bbox_s": 39.44,
+        "bbox_w": -0.40,
+        "bbox_n": 39.50,
+        "bbox_e": -0.34,
+        "zoom_max": 20,
+        "keyword": "Valencia ICV 2025",
+    }
+
+    def test_create_source(self, client):
+        resp = client.post("/sources/", json=self.SOURCE)
+        assert resp.status_code == 201, resp.text
+        data = resp.json()
+        assert data["name"] == "valencia_icv_test"
+        assert data["zoom_max"] == 20
+
+    def test_create_duplicate_rejected(self, client):
+        resp = client.post("/sources/", json=self.SOURCE)
+        assert resp.status_code == 409
+
+    def test_list_sources(self, client):
+        resp = client.get("/sources/")
+        assert resp.status_code == 200
+        sources = resp.json()["sources"]
+        assert len(sources) >= 1
+        assert any(s["name"] == "valencia_icv_test" for s in sources)
+
+    def test_get_source(self, client):
+        resp = client.get("/sources/valencia_icv_test")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["tile_url"] == self.SOURCE["tile_url"]
+
+    def test_get_missing_source(self, client):
+        resp = client.get("/sources/nonexistent")
+        assert resp.status_code == 404
+
+    def test_delete_source(self, client):
+        resp = client.delete("/sources/valencia_icv_test")
+        assert resp.status_code == 200
+        assert resp.json()["deleted"] is True
+        resp = client.get("/sources/valencia_icv_test")
+        assert resp.status_code == 404
+
+    def test_delete_missing_source(self, client):
+        resp = client.delete("/sources/nonexistent")
+        assert resp.status_code == 404
+
+
+class TestProjectWithCustomSource:
+    """Test that a project can reference a custom tile source."""
+
+    def test_create_project_with_source(self, client):
+        # First register a source
+        client.post("/sources/", json={
+            "name": "my_city_source",
+            "tile_url": "https://city.example.com/{z}/{x}/{y}.png",
+            "bbox_s": 40.0, "bbox_w": -5.0, "bbox_n": 41.0, "bbox_e": -4.0,
+        })
+        # Then create a project referencing it
+        resp = client.post("/projects/", json={
+            "name": "my_city",
+            "location": "40.5,-4.5,40.6,-4.4",
+            "source": "my_city_source",
+        })
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["name"] == "my_city"
+        # Cleanup
+        client.delete("/projects/my_city")
+        client.delete("/sources/my_city_source")

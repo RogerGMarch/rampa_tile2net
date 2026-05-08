@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from tile2net.api.exceptions import PipelineConflictError, ProjectNotFoundError
-from tile2net.api.routers import data, pipeline, projects
+from tile2net.api.routers import data, pipeline, projects, sources
 
 DESCRIPTION = r"""
 Tile2Net is a pedestrian-network extraction pipeline that turns aerial imagery
@@ -82,6 +82,14 @@ tags_metadata = [
             "and the weighted pedestrian graph."
         ),
     },
+    {
+        "name": "Sources",
+        "description": (
+            "Manage the **custom tile source catalogue**. Register tile URL "
+            "templates so that ``tile2net generate -s <name>`` can fetch imagery "
+            "for regions outside the built-in US sources."
+        ),
+    },
 ]
 
 
@@ -114,6 +122,7 @@ def create_app() -> FastAPI:
     app.include_router(projects.router, prefix="/projects", tags=["Projects"])
     app.include_router(pipeline.router, prefix="/projects", tags=["Pipeline"])
     app.include_router(data.router, prefix="/projects", tags=["Data"])
+    app.include_router(sources.router, prefix="/sources", tags=["Sources"])
 
     @app.get("/", tags=["Health"])
     async def root():

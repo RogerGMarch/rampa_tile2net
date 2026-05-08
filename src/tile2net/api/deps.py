@@ -142,3 +142,100 @@ def delete_project(con, name: str) -> bool:
         return False
     con.execute("DELETE FROM projects WHERE name=?", [name])
     return True
+
+
+# ── Source catalogue ───────────────────────────────────────────────────────────
+
+def _ensure_sources_table(con) -> None:
+    con.execute(
+        "CREATE TABLE IF NOT EXISTS sources ("
+        "  name VARCHAR PRIMARY KEY,"
+        "  tile_url VARCHAR NOT NULL,"
+        "  bbox_s DOUBLE, bbox_w DOUBLE, bbox_n DOUBLE, bbox_e DOUBLE,"
+        "  zoom_max INTEGER NOT NULL DEFAULT 20,"
+        "  server VARCHAR,"
+        "  extension VARCHAR DEFAULT 'png',"
+        "  tilesize INTEGER DEFAULT 256,"
+        "  keyword VARCHAR"
+        ")"
+    )
+
+
+def create_source(con, data: dict) -> str:
+    _ensure_sources_table(con)
+    con.execute(
+        "INSERT INTO sources VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            data["name"], data["tile_url"],
+            data["bbox_s"], data["bbox_w"], data["bbox_n"], data["bbox_e"],
+            data.get("zoom_max", 20), data.get("server"),
+            data.get("extension", "png"), data.get("tilesize", 256),
+            data.get("keyword"),
+        ],
+    )
+    return data["name"]
+
+
+def read_source(con, name: str) -> dict | None:
+    _ensure_sources_table(con)
+    row = con.execute("SELECT * FROM sources WHERE name=?", [name]).fetchone()
+    if row is None:
+        return None
+    cols = [d[0] for d in con.description]
+    return dict(zip(cols, row))
+
+
+def list_sources(con) -> list[dict]:
+    _ensure_sources_table(con)
+    rows = con.execute("SELECT * FROM sources ORDER BY name").fetchall()
+    cols = [d[0] for d in con.description]
+    return [dict(zip(cols, r)) for r in rows]
+
+
+def delete_source(con, name: str) -> bool:
+    _ensure_sources_table(con)
+    row = con.execute("SELECT name FROM sources WHERE name=?", [name]).fetchone()
+    if row is None:
+        return False
+    con.execute("DELETE FROM sources WHERE name=?", [name])
+    return True
+
+
+def register_source_runtime(source_row: dict) -> None:
+    """Dynamically register a source in the tile2net ``SourceMeta.catalog``.
+
+    Creates a synthetic ``Source`` subclass so that ``Source[name]`` returns it.
+    """
+    from geopandas import GeoSeries
+    from shapely.geometry import box
+
+    from tile2net.raster.source import Source, SourceMeta
+
+    name = source_row["name"]
+    if name in SourceMeta.catalog:
+        return
+
+    tile_url = source_row["tile_url"]
+
+    ns = {
+        "name": name,
+        "keyword": source_row.get("keyword") or name,
+        "zoom": source_row.get("zoom_max", 20),
+        "extension": source_row.get("extension", "png"),
+        "tilesize": source_row.get("tilesize", 256),
+        "server": source_row.get("server", ""),
+    }
+    cls = type(name, (Source,), ns)
+
+    cls.coverage = GeoSeries(
+        [box(
+            source_row["bbox_w"], source_row["bbox_s"],
+            source_row["bbox_e"], source_row["bbox_n"],
+        )],
+        crs="EPSG:4326",
+    )
+
+    # Assign tile_url via class-level property so self.tiles returns it
+    cls.tiles = property(lambda self, u=tile_url: u)
+
+    SourceMeta.catalog[name] = cls

@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import subprocess
 import sys
+import tempfile
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
@@ -43,24 +45,63 @@ def _task_to_status(task: TaskInfo) -> PipelineStatus:
 
 # ── stage runners (called in thread pool) ──────────────────────────────────────
 
-def _run_generate(project: dict, task: TaskInfo):
+def _build_generate_script(source_row: dict, generate_args: list[str]) -> str:
+    script = f'''import sys
+from tile2net.api.deps import register_source_runtime
+
+register_source_runtime({json.dumps(source_row)})
+
+sys.argv = ["tile2net", "generate"] + {json.dumps(generate_args)}
+from tile2net.__main__ import main
+main()
+'''
+    fd, path = tempfile.mkstemp(suffix=".py", prefix="tile2net_generate_")
+    with os.fdopen(fd, 'w') as f:
+        f.write(script)
+    return path
+
+
+def _run_generate(project: dict, task: TaskInfo, trigger: PipelineTrigger):
     bbox = (
         f"{project['bbox_s']},{project['bbox_w']},"
         f"{project['bbox_n']},{project['bbox_e']}"
     )
-    cmd = [
-        sys.executable, "-m", "tile2net", "generate",
+    generate_args = [
         "-l", bbox,
         "-n", project["name"],
         "-o", project["output_dir"],
         "-z", str(project["zoom"]),
     ]
-    if project.get("source"):
-        cmd += ["-s", project["source"]]
-    task.message = "Downloading tiles and stitching..."
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+
+    if trigger.tile_input_dir:
+        generate_args += ["--input", trigger.tile_input_dir]
+
+    source_name = project.get("source")
+    custom_source = None
+    if source_name:
+        from tile2net.api.deps import get_registry_db, read_source
+        con = get_registry_db()
+        try:
+            custom_source = read_source(con, source_name)
+        finally:
+            con.close()
+        generate_args += ["-s", source_name]
+
+    if custom_source:
+        script_path = _build_generate_script(custom_source, generate_args)
+        try:
+            cmd = [sys.executable, script_path]
+            task.message = "Downloading tiles and stitching..."
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+        finally:
+            os.unlink(script_path)
+    else:
+        cmd = [sys.executable, "-m", "tile2net", "generate"] + generate_args
+        task.message = "Downloading tiles and stitching..."
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+
     if result.returncode != 0:
-        raise RuntimeError(f"Generate failed: {result.stderr[:500]}")
+        raise RuntimeError(f"Generate failed: {result.stderr[:5000]}")
     return result.stdout
 
 
@@ -151,7 +192,7 @@ async def _run_pipeline(project: dict, task: TaskInfo, trigger: PipelineTrigger)
         if not trigger.skip_generate:
             task.stage = PipelineStage.GENERATING
             task.progress = 0.05
-            info_json = await asyncio.to_thread(_run_generate, project, task)
+            info_json = await asyncio.to_thread(_run_generate, project, task, trigger)
             task.progress = 0.33
             con = get_registry_db()
             try:
