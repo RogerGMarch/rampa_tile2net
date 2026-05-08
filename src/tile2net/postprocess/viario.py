@@ -54,9 +54,12 @@ class OSMViarioSource(ViarioSource):
 
         for attempt in range(_MAX_RETRIES):
             try:
-                data_bytes = urllib.request.urlopen(
-                    _OVERPASS_URL, data=query.encode(), timeout=120
-                ).read()
+                req = urllib.request.Request(
+                    _OVERPASS_URL,
+                    data=query.encode(),
+                    headers={"User-Agent": "tile2net/0.4", "Accept": "application/json"},
+                )
+                data_bytes = urllib.request.urlopen(req, timeout=120).read()
                 data: dict = json.loads(data_bytes)
                 if self._cache:
                     with open(self._cache, "w") as f:
