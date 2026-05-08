@@ -333,6 +333,7 @@ class LocalDumper(ThreadedDumper):
             img_array=True,
     ) -> Optional[GeoDataFrame]:
         # write the segmentation to assets
+        os.makedirs(os.path.dirname(tile.segmentation), exist_ok=True)
         future = self.threads.submit(np.save, tile.segmentation, src_img)
         self.futures.append(future)
         result = super().map_features(tile, src_img, img_array=img_array)
