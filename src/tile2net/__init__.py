@@ -1,4 +1,4 @@
-__all__ = 'Grid Raster Tile PedNet Artifacts Project'.split()
+__all__ = 'Grid Raster Tile PedNet Artifacts Project PedestrianPostProcessor PostProcessConfig'.split()
 import os
 import warnings
 
@@ -16,3 +16,4 @@ from tile2net.raster.pednet import PedNet
 from tile2net.raster.project import Project
 from tile2net.logger import logger
 from tile2net.raster.source import Source
+from tile2net.postprocess import PedestrianPostProcessor, PostProcessConfig
