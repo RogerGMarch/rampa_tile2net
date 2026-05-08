@@ -1,0 +1,143 @@
+# AGENTS.md — Tile2Net
+
+## Fork Purpose
+
+This fork adds a post-processing pipeline to clean tile2net output and produce a **weighted NetworkX graph** for Spanish cities. The main deliverable is a `MultiGraph` with edge attributes `f_type`, `width`, `length`, `source`, and `geometry` — serialized as `.gpickle` and `.graphml`.
+
+Default configuration is tuned for **Valencia, Spain**:
+- Metric CRS: `EPSG:25830` (ETRS89 / UTM zone 30N — transverse Mercator in metres)
+- WGS84 bounding box: `(39.415, -0.438, 39.519, -0.319)` — *Russafa neighbourhood*
+
+The CRS is controlled by a single parameter — `PostProcessConfig.metric_crs` — and is enforced consistently across every pipeline step: polygon loading, viario, blocking mask, gap-fill, network, and graph output. Never change the CRS mid-pipeline; use this one config value.
+
+## Planned Dependencies
+
+- **`tobler`** — for geometry handling (areal interpolation, spatial transforms)
+- **`pandana`** — for network analysis on top of the weighted graph (fast accessibility queries via contraction hierarchies)
+
+These are not yet wired in; polygon ops currently use Shapely/GeoPandas directly.
+
+## Setup & Environment
+
+- Python **3.10 or 3.11 only** (`>=3.10,<3.12`). 3.12+ will not work.
+- **`numpy<2.0`** is pinned in `requirements-dev.txt` — do not upgrade.
+- Package manager: **`uv`** (lockfile: `uv.lock`). Custom PyTorch index (`cu128`).
+  - Install: `uv sync`
+  - Or traditional: `python -m pip install -e .`
+- **CUDA GPU required** for inference and for `test_local.py` / `test_remote.py`.
+
+## Key Commands
+
+```bash
+# Run generate + inference (piped)
+python -m tile2net generate -l "coords_or_address" -n project_name -o output_dir | python -m tile2net inference
+
+# Generate only
+python -m tile2net generate -l "Washington Square Park, NYC, NY, USA" -n myproj -o ./output
+
+# Inference from saved JSON
+python -m tile2net inference --city_info path/to/info.json
+```
+
+## Post-Processing Pipeline (this fork's focus)
+
+`PedestrianPostProcessor` runs these steps in order:
+
+1. Load and clean tile2net polygon shapefile (simplify, open/close buffer, area filter)
+2. Fetch reference viario — can be **OSM** (`OSMViarioSource` via Overpass API) or **official municipal data** (`OfficialViarioSource` via ArcGIS REST / WFS)
+3. Distance filter: drop polygons far from any viario edge (configurable `osm_filter_dist`)
+4. Fetch OSM blocking mask (buildings + leisure areas like stadiums, pitches)
+5. Subtract blocking mask from polygons
+6. Gap-fill: add footway centerlines and road-edge sidewalks along OSM edges that lack coverage
+7. Estimate polygon widths (hydraulic-radius approximation: `2·area/perimeter`)
+8. Load tile2net network shapefile
+9. Annotate each network edge with width from nearby polygons (dual-radius search)
+10. Build `NetworkX.MultiGraph` with weighted edges
+
+```python
+from tile2net.postprocess import PedestrianPostProcessor, OfficialViarioSource
+
+processor = PedestrianPostProcessor(
+    polygon_path="polygons/final/final.shp",
+    network_path="network/network.shp",
+    viario=OfficialViarioSource(
+        source_type="arcgis_rest",
+        url="https://geoportal.valencia.es/server/rest/services/..."
+    ),
+)
+result = processor.run()
+result.save("out/")  # writes polygons.shp, network.shp, graph.gpickle, graph.graphml
+```
+
+Key postprocess modules:
+- `processor.py` — main orchestrator (350 lines)
+- `viario.py` — abstract `ViarioSource`, `OSMViarioSource` (Overpass), `OfficialViarioSource` (geoportal → ArcGIS REST or WFS)
+- `_gap_fill.py` — footway centerline + road-sidewalk gap fill
+- `_width.py` — polygon width via hydraulic radius; network-edge width via spatial search
+- `_blocking.py` — OSM building + leisure area mask
+- `result.py` — `PostProcessResult` holding polygons, network, and graph
+
+## Tests
+
+- Test files live in `tests/` at the repo root — **not** `src/tile2net/tests/` (the `pyproject.toml` `testpaths` is wrong — it points to a nonexistent directory).
+- GPU-required integration tests (needs tile download + model weights):
+  ```bash
+  pytest -s ./tests/test_remote.py     # --remote mode
+  pytest -s ./tests/test_local.py      # --local mode
+  ```
+- Namespace unit test (no GPU, safe to run locally — only needs torch installed, not CUDA):
+  ```bash
+  pytest ./tests/test_namespace.py
+  ```
+- Always use `-s` — tests output to stdout.
+- Model weights download automatically from Google Drive to `src/tile2net/raster/resources/` on first run. That directory is gitignored.
+
+## Architecture
+
+```
+src/tile2net/
+├── __main__.py          # Entry: argh.dispatch_commands([generate, inference])
+├── namespace.py         # Unified config/arg Namespace (731 lines, based on Detectron)
+├── raster/              # Core: Grid, Raster, Tile, Project, Source catalogue
+│   ├── generate/        # `generate` subcommand
+│   ├── source.py        # Supported region catalogue (810 lines)
+│   └── resources/       # Auto-downloaded model weights (gitignored)
+├── tileseg/             # Semantic segmentation model (HRNet + OCRNet)
+│   ├── inference/       # `inference` subcommand
+│   └── config.py        # cfg (AttrDict) wired to Namespace
+├── postprocess/         # Post-processing: polygon cleaning, OSM/municipal viario,
+│   │                    # gap-fill, width estimation, weighted-graph export
+│   ├── processor.py     # PedestrianPostProcessor — 10-step pipeline
+│   ├── viario.py        # ViarioSource (OSM Overpass or official ArcGIS REST / WFS)
+│   ├── _gap_fill.py     # Footway centerlines + road-edge sidewalks
+│   ├── _width.py        # Polygon and network-edge width estimation
+│   ├── _blocking.py     # OSM building + leisure blocking mask
+│   └── result.py        # PostProcessResult (polygons, network, NetworkX graph)
+└── logger.py            # Configures logging from logging.conf at import time
+```
+
+- The **Raster** class is the central orchestrator. `Raster.from_info()` deserializes from JSON.
+- CLI uses **`argh`** (not argparse/click). Subcommands are standalone functions decorated with `@commandline`.
+- Piping works because `generate` dumps JSON to stdout; `Namespace.__init__()` reads stdin when piped.
+- The **Source** catalogue maps locations/coordinates to known tile sources via `Source[...]` (`__getitem__`).
+- Importing `tile2net` **configures global logging** via `logging.config.fileConfig('logging.conf')`. Do not re-configure logging after import.
+
+## General Best Practices
+
+- **Never commit secrets, credentials, or large binary data.** Model weights auto-download to `src/tile2net/raster/resources/` (gitignored).
+- **All dependencies via `uv`.** Use `uv add` / `uv sync` — never ad-hoc pip install without updating `pyproject.toml` or `requirements-dev.txt`. Always commit `uv.lock`.
+- **Modular, single-responsibility code.** Clear layered structure: ingestion → processing → analysis → output. Small functions/classes, documented with docstrings.
+- **No hardcoded paths.** Drive paths from config (see `PostProcessConfig` pattern).
+- **Notebooks are exploratory only.** Finalized logic belongs in `src/` as proper Python modules.
+- **Branch workflow:** main = stable, `feature/<name>` / `fix/<name>` for changes. Open a PR for all changes; do not commit directly to main.
+- **Commit messages explain why**, not just what.
+- **Tests in `tests/`** for all core logic in `src/`. Run before opening a PR.
+
+## Code Conventions
+
+- 4-space indent, 100-char line limit (see `.pylintrc`).
+- Naming: `snake_case` functions/variables, `PascalCase` classes, `UPPER_CASE` constants.
+- Shapely/Parquet warnings are suppressed in `__init__.py` at import time.
+- `toolz.pipe` is used extensively for functional-style composition.
+- Dataclasses for config (e.g. `PostProcessConfig` is a `@dataclass` with defaults tuned for Valencia).
+- New postprocess sources follow the `ViarioSource` ABC with a `fetch_edges(bbox) -> GeoDataFrame` contract.

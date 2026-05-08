@@ -56,3 +56,16 @@ include = ["tile2net*"]
 testpaths = [ "src/tile2net/tests" ]
 python_files = ["test_local.py"]
 
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+torchaudio = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[project.scripts]
+tile2net-api = "tile2net.api.main:main"
+

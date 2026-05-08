@@ -143,5 +143,12 @@ src/tile2net/logger.py
 # Don't ignore .npy files in segmentation folder for testing
 !src/tile2net/raster/resources/segmentation/**/*.npy
 
+# Generated test output and example run data
+test_output/
+examples/example_dir/
+
+# OpenCode local tool config
+.opencode/
+
 
 

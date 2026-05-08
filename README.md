@@ -180,3 +180,207 @@ To see more, there is an [inference.ipynb](https://github.com/VIDA-NYU/tile2net/
 interactive notebook to demonstrate
 how to run the inference process interactively.
 
+## GPU requirement
+
+Tile2Net requires a **CUDA-enabled GPU** for inference.  The model loads automatically from
+Google Drive on first run.  If you are only running post-processing or the API, no GPU is
+required.
+
+## Dependency management
+
+This fork uses **[uv](https://docs.astral.sh/uv/)** for dependency management:
+
+```bash
+uv sync                        # install all deps (CUDA PyTorch index is auto-configured)
+python -m pip install -e .     # traditional alternative
+```
+
+Dependencies are pinned in `requirements-dev.txt`.  Python **3.10 or 3.11** only (`>=3.10,<3.12`).
+
+## CRS convention
+
+| Layer | Storage CRS | Notes |
+|-------|-------------|-------|
+| Tile download (WMS) | EPSG:3857 (Web Mercator) | Slippy-map tiles |
+| Inference output | EPSG:4326 (WGS84) | Polygons + network shapefiles |
+| Post-processing | EPSG:25830 (metric, UTM 30N) | All measurements, filtering, gap-fill, graph |
+| DuckDB (polygons / network) | EPSG:4326 (WGS84) | GeoJSON-ready for the API |
+| DuckDB (graph) | metric CRS | Node coords + edge lengths in metres |
+| API responses | EPSG:4326 (WGS84) | GeoJSON FeatureCollections |
+
+The metric CRS is controlled by the single `PostProcessConfig.metric_crs` parameter
+(default `EPSG:25830` for Valencia / UTM Zone 30N).
+
+---
+
+## Post-Processing Pipeline
+
+After inference produces raw polygons and a centreline network, the post-processor
+cleans, filters, gap-fills, and annotates the output to produce a **weighted
+NetworkX MultiGraph**.
+
+### Programmatic usage
+
+```python
+from tile2net.postprocess import PedestrianPostProcessor, OSMViarioSource, PostProcessConfig
+
+processor = PedestrianPostProcessor(
+    polygon_path="polygons/final/final.shp",
+    network_path="network/project-Network-XX/project-Network-XX.shp",
+    viario=OSMViarioSource(cache_path="osm_cache.json"),
+    config=PostProcessConfig(metric_crs="EPSG:25830"),
+)
+result = processor.run()        # → PostProcessResult (polygons, network, graph)
+result.save("output_dir/")      # → shapefiles + graph.gpickle + graph.graphml
+```
+
+### Pipeline steps
+
+1. Load & clean tile2net polygons (simplify, buffer open/close, area filter)
+2. Fetch reference **viario** (OSM Overpass or official municipal data)
+3. Drop polygons far from any viario edge (distance filter, 10 m default)
+4. Fetch OSM **blocking mask** (buildings + leisure areas like stadiums)
+5. Subtract blocking mask from polygons
+6. **Gap-fill** — add footway centreline and road-edge sidewalk fills from OSM
+7. Estimate polygon widths (`2·area / perimeter`)
+8. Load tile2net network centreline
+9. **Annotate edges** with width from nearby polygons (dual-radius search + node propagation)
+10. Build `nx.MultiGraph` with `f_type`, `width`, `length`, `source`, `geometry` attributes
+
+### Width assignment guarantee
+
+Every edge is assigned a width via a three-layer fallback:
+
+| Layer | Method | Typical coverage |
+|-------|--------|-----------------|
+| 1 — spatial | Find nearby polygon, apply hydraulic radius | ~92% |
+| 2 — node propagation | Borrow mean width from incident edges at shared endpoints | +2% |
+| 3 — global median | Assign median of all known widths | → 100% |
+
+After step 3 every network edge and graph edge has a non-NaN width.
+
+---
+
+## DuckDB Storage
+
+Outputs can be persisted to a local **DuckDB** database with spatial extension support.
+
+### Tables
+
+| Table | Columns | Purpose |
+|-------|---------|---------|
+| `tiles` | `project_name`, `tx`, `ty`, `zoom`, `image BLOB` | Orthophoto tile PNGs |
+| `polygons` | `project_name`, `row_id`, `f_type`, `width`, `source`, `geom GEOMETRY` | Cleaned polygons (WGS84) |
+| `network` | `project_name`, `row_id`, `f_type`, `width`, `length`, `source`, `geom GEOMETRY` | Annotated centreline network (WGS84) |
+| `graph_nodes` | `project_name`, `node_id`, `x`, `y`, `geom GEOMETRY` | Graph nodes (metric CRS) |
+| `graph_edges` | `project_name`, `from_node`, `to_node`, `edge_key`, `f_type`, `width`, `length`, `source`, `geom GEOMETRY` | Graph edges (metric CRS) |
+
+### Usage
+
+```python
+from tile2net.duckdb import get_project_db, write_polygons, write_network, write_graph
+from tile2net.duckdb import read_polygons, read_network, read_graph, write_tiles, read_tile
+
+con = get_project_db("path/to/project")
+
+# Persist processor output
+write_polygons(con, "valencia_centre", result.polygons)
+write_network(con, "valencia_centre", result.network)
+write_graph(con, "valencia_centre", result.graph)
+
+# Read back
+gdf_poly = read_polygons(con, "valencia_centre")   # GeoDataFrame (WGS84)
+gdf_net  = read_network(con, "valencia_centre")    # GeoDataFrame (WGS84)
+graph    = read_graph(con, "valencia_centre")       # nx.MultiGraph
+```
+
+---
+
+## REST API
+
+A FastAPI server wraps the full pipeline — project registration, async pipeline
+execution, and GeoJSON queries.
+
+### Start the server
+
+```bash
+# Using uv
+uv run python -m tile2net.api
+
+# Or the registered console script
+tile2net-api
+```
+
+The API is available at `http://localhost:8000`.  Open `/docs` or `/redoc` for
+the interactive OpenAPI documentation.
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/` | Health check |
+| `POST` | `/projects/` | Register a new city project |
+| `GET` | `/projects/` | List all projects |
+| `GET` | `/projects/{name}` | Project detail + pipeline status |
+| `PATCH` | `/projects/{name}` | Update project config |
+| `DELETE` | `/projects/{name}` | Delete project and all data |
+| `POST` | `/projects/{name}/pipeline` | Start pipeline (async) |
+| `GET` | `/projects/{name}/pipeline/status` | Poll pipeline progress |
+| `DELETE` | `/projects/{name}/pipeline` | Cancel running pipeline |
+| `GET` | `/projects/{name}/polygons` | GeoJSON polygons (filter: `f_type`, `bbox`) |
+| `GET` | `/projects/{name}/network` | GeoJSON network (filter: `f_type`, `bbox`, `min_width`) |
+| `GET` | `/projects/{name}/graph` | Graph summary (nodes, edges, total length) |
+| `GET` | `/projects/{name}/graph/edges` | GeoJSON graph edges |
+
+### Quick start
+
+```bash
+# 1. Register a city (bbox or nominatim address)
+curl -X POST http://localhost:8000/projects/ \
+  -H "Content-Type: application/json" \
+  -d '{"name":"valencia_centre","location":"39.469,-0.381,39.478,-0.369"}'
+
+# 2. Run the pipeline (async — generate → infer → postprocess → persist)
+curl -X POST http://localhost:8000/projects/valencia_centre/pipeline \
+  -H "Content-Type: application/json" \
+  -d '{"skip_generate":true}'
+
+# 3. Poll until status == "completed"
+curl http://localhost:8000/projects/valencia_centre/pipeline/status | jq .status
+
+# 4. Query results
+curl "http://localhost:8000/projects/valencia_centre/polygons?f_type=sidewalk&limit=5"
+curl "http://localhost:8000/projects/valencia_centre/network?min_width=3.0"
+curl "http://localhost:8000/projects/valencia_centre/graph"
+```
+
+### Pipeline stages
+
+The `POST /projects/{name}/pipeline` endpoint runs these stages in order:
+
+| Stage | Progress | What happens |
+|-------|----------|-------------|
+| `generating` | 0% → 33% | Downloads slippy-map tiles from the configured source, stitches them |
+| `inferring` | 33% → 66% | Runs HRNet+OCRNet semantic segmentation on the stitched tiles |
+| `postprocessing` | 66% → 100% | Cleans polygons, gap-fills via OSM, estimates widths, builds graph, persists to DuckDB |
+
+Cancellation is **best-effort** — the current stage completes before the pipeline stops.
+
+---
+
+## Running Tests
+
+```bash
+# Post-processing + DuckDB + API tests (needs test data on disk)
+uv run pytest -s tests/test_postprocess.py tests/test_api.py -v
+
+# Namespace unit test (no GPU required)
+uv run pytest -s tests/test_namespace.py
+
+# GPU-required integration tests
+uv run pytest -s tests/test_remote.py    # --remote mode
+uv run pytest -s tests/test_local.py     # --local mode
+```
+
+Tests output to stdout; always pass `-s`.
+
