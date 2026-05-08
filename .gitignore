@@ -147,8 +147,7 @@ src/tile2net/logger.py
 test_output/
 examples/example_dir/
 
-# OpenCode local tool config
-.opencode/
+
 
 
 
