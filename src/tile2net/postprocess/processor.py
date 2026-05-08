@@ -306,6 +306,7 @@ class PedestrianPostProcessor:
     ) -> gpd.GeoDataFrame:
         net = net.copy()
         net["width"] = float("nan")
+        net["width_source"] = "none"
         net["length"] = net.geometry.length
 
         n_total = len(net)
@@ -326,12 +327,15 @@ class PedestrianPostProcessor:
 
         net["width"] = net.apply(_row_width, axis=1)
         n_spatial = int(net["width"].notna().sum())
+        net.loc[net["width"].notna(), "width_source"] = "spatial"
 
         n_propagated = 0
-        nan_mask = net["width"].isna()
-        if nan_mask.any() and not nan_mask.all():
+        nan_before = net["width"].isna()
+        if nan_before.any() and not nan_before.all():
             net = self._propagate_edge_widths(net)
-            n_propagated = int(nan_mask.sum() - net["width"].isna().sum())
+            filled = nan_before & net["width"].notna()
+            n_propagated = int(filled.sum())
+            net.loc[filled, "width_source"] = "propagation"
 
         n_median = 0
         still_nan = net["width"].isna()
@@ -340,6 +344,7 @@ class PedestrianPostProcessor:
             fallback = float(known.median()) if not known.empty else 3.0
             n_median = int(still_nan.sum())
             net.loc[still_nan, "width"] = fallback
+            net.loc[still_nan, "width_source"] = "median"
 
         parts = [f"spatial={n_spatial}"]
         if n_propagated:
@@ -408,6 +413,7 @@ class PedestrianPostProcessor:
             base_attrs = dict(
                 f_type=row.get("f_type", "sidewalk"),
                 width=float(row.get("width") if row.get("width") is not None else float("nan")),
+                width_source=str(row.get("width_source", "unknown")),
                 source=str(row.get("source", "tile2net")),
             )
             for part in parts:

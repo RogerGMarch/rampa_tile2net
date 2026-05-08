@@ -87,6 +87,27 @@ class TestWidthCoverage:
         unknown = set(result.polygons["f_type"].unique()) - valid
         assert not unknown, f"Unknown f_type values: {unknown}"
 
+    def test_network_width_source_column(self, result):
+        assert "width_source" in result.network.columns, "Network missing width_source column"
+        valid = {"spatial", "propagation", "median", "none"}
+        unknown = set(result.network["width_source"].unique()) - valid
+        assert not unknown, f"Unknown width_source values: {unknown}"
+
+    def test_width_source_counts_match_warning(self, result):
+        vc = result.network["width_source"].value_counts()
+        n_spatial = int(vc.get("spatial", 0))
+        n_propagation = int(vc.get("propagation", 0))
+        n_median = int(vc.get("median", 0))
+        total = n_spatial + n_propagation + n_median
+        assert total == len(result.network), (
+            f"width_source sum {total} != total edges {len(result.network)}"
+        )
+        # spatial should be the dominant source
+        assert n_spatial > n_propagation + n_median, (
+            f"spatial={n_spatial} should dominate propagation={n_propagation} "
+            f"+ median={n_median}"
+        )
+
 
 class TestGraphSanity:
     def test_graph_has_edges(self, result):
@@ -194,7 +215,7 @@ class TestDuckDBNetwork:
 
     def test_network_columns(self, duck_con):
         gdf = read_network(duck_con, "test_project")
-        for col in ("f_type", "width", "length", "source", "geometry"):
+        for col in ("f_type", "width", "width_source", "length", "source", "geometry"):
             assert col in gdf.columns, f"Missing column: {col}"
 
     def test_network_no_nan_widths(self, duck_con):
@@ -279,6 +300,10 @@ class TestDuckDBGraph:
         for u, v, k, data in g.edges(data=True, keys=True):
             assert "f_type" in data, f"Edge {(u, v, k)} missing f_type"
             assert "source" in data, f"Edge {(u, v, k)} missing source"
+            assert "width_source" in data, f"Edge {(u, v, k)} missing width_source"
+            assert data["width_source"] in ("spatial", "propagation", "median", ""), (
+                f"Edge {(u, v, k)} bad width_source: {data.get('width_source')!r}"
+            )
 
     def test_graph_nodes_have_coords(self, duck_con):
         g = read_graph(duck_con, "test_project")

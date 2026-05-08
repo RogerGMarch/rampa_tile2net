@@ -271,9 +271,26 @@ Outputs can be persisted to a local **DuckDB** database with spatial extension s
 |-------|---------|---------|
 | `tiles` | `project_name`, `tx`, `ty`, `zoom`, `image BLOB` | Orthophoto tile PNGs |
 | `polygons` | `project_name`, `row_id`, `f_type`, `width`, `source`, `geom GEOMETRY` | Cleaned polygons (WGS84) |
-| `network` | `project_name`, `row_id`, `f_type`, `width`, `length`, `source`, `geom GEOMETRY` | Annotated centreline network (WGS84) |
+| `network` | `project_name`, `row_id`, `f_type`, `width`, `width_source`, `length`, `source`, `geom GEOMETRY` | Annotated centreline network (WGS84) |
 | `graph_nodes` | `project_name`, `node_id`, `x`, `y`, `geom GEOMETRY` | Graph nodes (metric CRS) |
-| `graph_edges` | `project_name`, `from_node`, `to_node`, `edge_key`, `f_type`, `width`, `length`, `source`, `geom GEOMETRY` | Graph edges (metric CRS) |
+| `graph_edges` | `project_name`, `from_node`, `to_node`, `edge_key`, `f_type`, `width`, `width_source`, `length`, `source`, `geom GEOMETRY` | Graph edges (metric CRS) |
+
+The API also maintains a central **registry** database at `~/.tile2net/registry.db`:
+
+| Table | Columns | Purpose |
+|-------|---------|---------|
+| `projects` | `name`, `location`, `zoom`, `crs`, `metric_crs`, `source`, `tile_step`, `stitch_step`, `viario_type`, `viario_url`, `output_dir`, `bbox_s`, `bbox_w`, `bbox_n`, `bbox_e`, `status`, `created_at`, `updated_at` | Project metadata registry |
+
+### `width_source` provenance
+
+Every network edge and graph edge includes a `width_source` column that tracks
+**how** the width was assigned:
+
+| Value | Meaning |
+|-------|---------|
+| `spatial` | Direct measurement from a nearby polygon (hydraulic radius) |
+| `propagation` | Interpolated from incident edges at shared endpoint nodes |
+| `median` | Global-median fallback for orphan leaf edges with no nearby data |
 
 ### Usage
 

@@ -58,7 +58,7 @@ def gdf_to_geojson(gdf: gpd.GeoDataFrame, dst_crs: str = "EPSG:4326") -> dict:
         return {"type": "FeatureCollection", "features": []}
     gdf = gdf.to_crs(dst_crs)
     # keep only geometry + meaningful attribute columns
-    keep = ["geometry", "f_type", "width", "length", "source"]
+    keep = ["geometry", "f_type", "width", "width_source", "length", "source"]
     cols = [c for c in keep if c in gdf.columns]
     result = gdf[cols].__geo_interface__
     # remove 'id' key that gpd inserts

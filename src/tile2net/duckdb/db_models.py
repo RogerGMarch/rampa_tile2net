@@ -37,7 +37,7 @@ def _ensure_tables(con) -> None:
     con.execute(
         "CREATE TABLE IF NOT EXISTS network ("
         "  project_name VARCHAR, row_id INTEGER,"
-        "  f_type VARCHAR, width DOUBLE, length DOUBLE, source VARCHAR,"
+        "  f_type VARCHAR, width DOUBLE, length DOUBLE, source VARCHAR, width_source VARCHAR,"
         "  geom GEOMETRY,"
         "  PRIMARY KEY (project_name, row_id)"
         ")"
@@ -54,7 +54,7 @@ def _ensure_tables(con) -> None:
         "CREATE TABLE IF NOT EXISTS graph_edges ("
         "  project_name VARCHAR,"
         "  from_node VARCHAR, to_node VARCHAR, edge_key INTEGER,"
-        "  f_type VARCHAR, width DOUBLE, length DOUBLE, source VARCHAR,"
+        "  f_type VARCHAR, width DOUBLE, length DOUBLE, source VARCHAR, width_source VARCHAR,"
         "  geom GEOMETRY,"
         "  PRIMARY KEY (project_name, from_node, to_node, edge_key)"
         ")"
@@ -162,9 +162,9 @@ def write_network(con, project_name: str, gdf: gpd.GeoDataFrame) -> None:
     _ensure_tables(con)
 
     gdf = gdf.to_crs("EPSG:4326")
-    for col in ("f_type", "width", "length", "source"):
+    for col in ("f_type", "width", "length", "source", "width_source"):
         if col not in gdf.columns:
-            gdf[col] = "" if col == "source" else float("nan")
+            gdf[col] = "" if col in ("source", "width_source") else float("nan")
 
     con.execute("DELETE FROM network WHERE project_name=?", [project_name])
 
@@ -175,12 +175,13 @@ def write_network(con, project_name: str, gdf: gpd.GeoDataFrame) -> None:
             float(row.get("width", float("nan"))),
             float(row.get("length", 0.0)),
             str(row.get("source", "")),
+            str(row.get("width_source", "")),
             row.geometry.wkb,
         )
         for i, row in gdf.iterrows()
     ]
     con.executemany(
-        "INSERT INTO network VALUES (?, ?, ?, ?, ?, ?, ST_GeomFromWKB(?))", rows
+        "INSERT INTO network VALUES (?, ?, ?, ?, ?, ?, ?, ST_GeomFromWKB(?))", rows
     )
 
 
@@ -188,13 +189,14 @@ def read_network(con, project_name: str) -> gpd.GeoDataFrame:
     """Return all annotated network edges as a GeoDataFrame."""
     _ensure_tables(con)
     df = con.execute(
-        "SELECT row_id, f_type, width, length, source, ST_AsBinary(geom) AS geom_wkb "
+        "SELECT row_id, f_type, width, length, source, width_source, "
+        "ST_AsBinary(geom) AS geom_wkb "
         "FROM network WHERE project_name=? ORDER BY row_id",
         [project_name],
     ).fetchdf()
     if df.empty:
         return gpd.GeoDataFrame(
-            columns=["f_type", "width", "length", "source", "geometry"],
+            columns=["f_type", "width", "length", "source", "width_source", "geometry"],
             geometry="geometry",
         )
     df["geometry"] = df["geom_wkb"].apply(lambda b: wkb.loads(bytes(b)))
@@ -253,10 +255,11 @@ def write_graph(con, project_name: str, graph: nx.MultiGraph) -> None:
             float(data.get("width", float("nan"))),
             float(data.get("length", 0.0)),
             str(data.get("source", "")),
+            str(data.get("width_source", "")),
             wkb_bytes,
         ))
     con.executemany(
-        "INSERT INTO graph_edges VALUES (?, ?, ?, ?, ?, ?, ?, ?, ST_GeomFromWKB(?))",
+        "INSERT INTO graph_edges VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ST_GeomFromWKB(?))",
         edge_rows,
     )
 
@@ -283,7 +286,7 @@ def read_graph(con, project_name: str) -> nx.MultiGraph:
 
     # edges
     edge_df = con.execute(
-        "SELECT from_node, to_node, edge_key, f_type, width, length, source, "
+        "SELECT from_node, to_node, edge_key, f_type, width, length, source, width_source, "
         "ST_AsBinary(geom) AS geom_wkb "
         "FROM graph_edges WHERE project_name=? ORDER BY from_node, to_node, edge_key",
         [project_name],
@@ -296,6 +299,7 @@ def read_graph(con, project_name: str) -> nx.MultiGraph:
             width=row.get("width", float("nan")),
             length=row.get("length", 0.0),
             source=row.get("source", ""),
+            width_source=row.get("width_source", ""),
             geometry=wkb.loads(bytes(geom_blob)) if geom_blob else None,
         )
 

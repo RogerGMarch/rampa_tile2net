@@ -20,12 +20,13 @@ class PostProcessResult:
         Columns: ``f_type``, ``width`` (metres), ``source``, ``geometry``.
     network:
         Pedestrian centerline network.
-        Columns: ``f_type``, ``width`` (metres), ``length`` (metres),
+        Columns: ``f_type``, ``width`` (metres), ``width_source`` (``spatial``,
+        ``propagation``, or ``median``), ``length`` (metres),
         ``source``, ``geometry``.
     graph:
         NetworkX ``MultiGraph`` built from *network*.
         Node attributes: ``x``, ``y``, ``geometry`` (Shapely Point).
-        Edge attributes: ``f_type``, ``width``, ``length``, ``source``,
+        Edge attributes: ``f_type``, ``width``, ``width_source``, ``length``, ``source``,
         ``geometry`` (Shapely LineString).
     """
 

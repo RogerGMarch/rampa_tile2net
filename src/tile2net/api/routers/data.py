@@ -125,7 +125,8 @@ def get_network(
     """Return the annotated pedestrian centreline network as GeoJSON.
 
     Edges are in **WGS84** (EPSG:4326).  Each feature includes ``f_type``,
-    ``width`` (metres), ``length`` (metres), and ``source`` properties.
+    ``width`` (metres), ``width_source`` (``spatial`` / ``propagation`` /
+    ``median``), ``length`` (metres), and ``source`` properties.
     Every edge is guaranteed to have a non-NaN width.
     """
     try:
@@ -221,7 +222,8 @@ def get_graph_edges(
 ):
     """Return graph edges from the weighted pedestrian MultiGraph as GeoJSON.
 
-    Each edge includes its ``f_type``, ``width``, ``length``, and ``source``.
+    Each edge includes its ``f_type``, ``width``, ``width_source``
+    (``spatial`` / ``propagation`` / ``median``), ``length``, and ``source``.
     MultiGraph edges with the same endpoints but different keys are returned
     as separate features.
     """
@@ -244,6 +246,7 @@ def get_graph_edges(
             "geometry": geom,
             "f_type": data.get("f_type", ""),
             "width": data.get("width", None),
+            "width_source": data.get("width_source", ""),
             "length": data.get("length", 0),
             "source": data.get("source", ""),
         })
