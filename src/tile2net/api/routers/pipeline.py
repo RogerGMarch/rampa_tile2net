@@ -46,14 +46,20 @@ def _task_to_status(task: TaskInfo) -> PipelineStatus:
 # ── stage runners (called in thread pool) ──────────────────────────────────────
 
 def _build_generate_script(source_row: dict, generate_args: list[str]) -> str:
+    import re
+    src_json = json.dumps(source_row)
+    args_json = json.dumps(generate_args)
+    # JSON uses null/true/false but the script is Python — fix literals
+    for js, py in [('null', 'None'), ('true', 'True'), ('false', 'False')]:
+        src_json = re.sub(r'\b' + js + r'\b', py, src_json)
+        args_json = re.sub(r'\b' + js + r'\b', py, args_json)
     script = f'''import sys
 from tile2net.api.deps import register_source_runtime
 
-register_source_runtime({json.dumps(source_row)})
+register_source_runtime({src_json})
 
-sys.argv = ["tile2net", "generate"] + {json.dumps(generate_args)}
-from tile2net.__main__ import main
-main()
+sys.argv = ["tile2net", "generate"] + {args_json}
+from tile2net.__main__ import generate
 '''
     fd, path = tempfile.mkstemp(suffix=".py", prefix="tile2net_generate_")
     with os.fdopen(fd, 'w') as f:
