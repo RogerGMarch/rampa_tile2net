@@ -142,11 +142,26 @@ def _run_postprocess(project: dict, task: TaskInfo):
     output_dir = Path(project["output_dir"]) / project["name"]
     poly_path = output_dir / "polygons" / "final" / "final.shp"
 
+    # inference saves to timestamped dir; find the actual shp if final/ doesn't exist
+    if not poly_path.exists():
+        poly_dirs = sorted((output_dir / "polygons").glob("*Polygons-*"))
+        if poly_dirs:
+            poly_dir = poly_dirs[-1]
+            poly_path = poly_dir / f"{poly_dir.name}.shp"
+
     net_dirs = sorted((output_dir / "network").iterdir())
     if not net_dirs:
         raise RuntimeError("No network directory found in inference output")
-    net_dir = net_dirs[-1]
+    # filter to only timestamped dirs
+    net_ts_dirs = [d for d in net_dirs if 'Network-' in str(d)]
+    if net_ts_dirs:
+        net_dir = net_ts_dirs[-1]
+    else:
+        net_dir = net_dirs[-1]
     net_path = net_dir / f"{net_dir.name}.shp"
+
+    if not poly_path.exists():
+        raise RuntimeError(f"Polygon shapefile not found: {poly_path}")
 
     if project.get("viario_type") == "official" and project.get("viario_url"):
         viario = OfficialViarioSource(
