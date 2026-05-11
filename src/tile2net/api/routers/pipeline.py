@@ -98,13 +98,13 @@ def _run_generate(project: dict, task: TaskInfo, trigger: PipelineTrigger):
         try:
             cmd = [sys.executable, script_path]
             task.message = "Downloading tiles and stitching..."
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=21600)
         finally:
             os.unlink(script_path)
     else:
         cmd = [sys.executable, "-m", "tile2net", "generate"] + generate_args
         task.message = "Downloading tiles and stitching..."
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=21600)
 
     if result.returncode != 0:
         raise RuntimeError(f"Generate failed: {result.stderr[:5000]}")
@@ -124,7 +124,7 @@ def _run_inference(project: dict, info_json: str, task: TaskInfo):
         pass
     cmd = [sys.executable, "-m", "tile2net", "inference"]
     result = subprocess.run(
-        cmd, input=info_json, capture_output=True, text=True, timeout=3600,
+        cmd, input=info_json, capture_output=True, text=True, timeout=14400,
     )
     if result.returncode != 0:
         raise RuntimeError(f"Inference failed: {result.stderr[:5000]}")
