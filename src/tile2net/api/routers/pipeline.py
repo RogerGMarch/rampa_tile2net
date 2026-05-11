@@ -113,12 +113,21 @@ def _run_generate(project: dict, task: TaskInfo, trigger: PipelineTrigger):
 
 def _run_inference(project: dict, info_json: str, task: TaskInfo):
     task.message = "Running semantic segmentation..."
+    # Strip source field to avoid inference looking up non-built-in sources
+    try:
+        info = json.loads(info_json)
+        info.pop('source', None)
+        info.pop('server', None)
+        info.pop('year', None)
+        info_json = json.dumps(info)
+    except (json.JSONDecodeError, TypeError):
+        pass
     cmd = [sys.executable, "-m", "tile2net", "inference"]
     result = subprocess.run(
         cmd, input=info_json, capture_output=True, text=True, timeout=3600,
     )
     if result.returncode != 0:
-        raise RuntimeError(f"Inference failed: {result.stderr[:500]}")
+        raise RuntimeError(f"Inference failed: {result.stderr[:5000]}")
 
 
 def _run_postprocess(project: dict, task: TaskInfo):
