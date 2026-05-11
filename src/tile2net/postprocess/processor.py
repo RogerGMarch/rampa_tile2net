@@ -159,7 +159,11 @@ class PedestrianPostProcessor:
         gdf = self._distance_filter(gdf, ref_viario)
 
         # 4–5: blocking mask subtraction
-        block_mask = self._fetch_blocking(bbox)
+        try:
+            block_mask = self._fetch_blocking(bbox)
+        except Exception:
+            warnings.warn("Blocking mask fetch failed (likely area too large) — skipping")
+            block_mask = None
         gdf = self._subtract_blocking(gdf, block_mask)
 
         # 6: gap fill using OSM (footways + road-edge sidewalks)

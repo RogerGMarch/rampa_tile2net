@@ -677,6 +677,7 @@ class Grid(BaseGrid):
         if poly_network.crs != crs_metric:
             poly_network.to_crs(crs_metric, inplace=True)
         poly_network.geometry = poly_network.simplify(0.6)
+        poly_network.geometry = poly_network.geometry.apply(lambda g: shapely.make_valid(g) if g is not None and not g.is_empty else g)
         unioned = buff_dfs(poly_network)
         unioned.geometry = unioned.geometry.simplify(0.9)
         unioned = unioned[unioned.geometry.notna()]
