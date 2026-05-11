@@ -213,12 +213,14 @@ def read_dataframe(src_path, geo=True, cols=None):
 
 def unary_multi(gdf: GeoDataFrame) -> GeoDataFrame:
     # handles the errors with multipolygon
-    loc = ~gdf.is_valid.values
-    # logger.warning(f'Number of invalid geometries: {loc.sum()} out of {len(gdf)}')
-    count = loc.sum()
+    count = (~gdf.is_valid).sum()
     if count:
         logger.warning(f'Number of invalid geometries: {count} out of {len(gdf)}')
-    gdf.geometry.loc[loc] = shapely.make_valid(gdf.geometry.loc[loc])
+    # Fix invalid geometries before dissolve — use .loc with geometry column setter
+    # to avoid pandas Copy-on-Write issues
+    gdf['geometry'] = gdf['geometry'].apply(
+        lambda g: shapely.make_valid(g) if g is not None and not g.is_empty else g
+    )
     result = (
         gdf
         # dissolve overlapping geometries
@@ -227,7 +229,9 @@ def unary_multi(gdf: GeoDataFrame) -> GeoDataFrame:
         .explode()
     )
     # fix any invalid geometries introduced by dissolve
-    result.geometry = result.geometry.apply(lambda g: shapely.make_valid(g) if g is not None and not g.is_empty else g)
+    result['geometry'] = result['geometry'].apply(
+        lambda g: shapely.make_valid(g) if g is not None and not g.is_empty else g
+    )
     return result
 
 
