@@ -291,7 +291,29 @@ def to_cline(geom: shapely.geometry.Polygon, t: float, simpl: float, **attribute
         cent = get_crosswalk_cnl(geom)
         return cent
     else:
-        cent = Centerline(geom.simplify(simpl), t).geometry
+        try:
+            cent = Centerline(geom.simplify(simpl), t).geometry
+        except (Exception,) as exc:
+            # QhullError on degenerate polygons — fall back to simple centerline
+            if "QhullError" in str(type(exc).__name__) or "qhull" in str(exc).lower():
+                # Use the minimum rotated rectangle's midline as centerline
+                rect = geom.minimum_rotated_rectangle
+                coords = list(rect.exterior.coords)
+                if len(coords) >= 5:
+                    # Take the midline of the rectangle (midpoint of two long sides)
+                    p0 = shapely.geometry.Point(
+                        (coords[0][0] + coords[3][0]) / 2,
+                        (coords[0][1] + coords[3][1]) / 2,
+                    )
+                    p1 = shapely.geometry.Point(
+                        (coords[1][0] + coords[2][0]) / 2,
+                        (coords[1][1] + coords[2][1]) / 2,
+                    )
+                    return shapely.geometry.LineString([p0, p1])
+                else:
+                    # Degenerate rectangle — use centroid
+                    return geom.centroid
+            raise
         try:
             line = shapely.ops.linemerge(cent)
             return line
